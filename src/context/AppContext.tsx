@@ -67,6 +67,7 @@ type AppContextValue = {
   history: HistoryEntry[]
   calculate: () => void
   clearAll: () => void
+  clearResult: () => void
   loadDemo: () => void
   saveHistory: () => void
   loadHistoryEntry: (entry: HistoryEntry) => void
@@ -98,8 +99,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const calculate = useCallback(() => {
     const cleaned = sanitizeInputs(stocks, parts)
-    setStocks(cleaned.stocks.length ? [...cleaned.stocks, emptyStock()] : [emptyStock()])
-    setParts(cleaned.parts.length ? [...cleaned.parts, emptyPart()] : [emptyPart()])
 
     const validationError = validateInputs(cleaned.stocks, cleaned.parts)
     if (validationError) {
@@ -133,6 +132,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCuttingName('')
     navigate('/stocks')
   }, [navigate])
+
+  const clearResult = useCallback(() => {
+    setResult(null)
+    setError(null)
+  }, [])
 
   const loadDemo = useCallback(() => {
     setStocks(DEMO_STOCKS.map((s) => ({ ...s, id: uid('s') })))
@@ -197,6 +201,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       history,
       calculate,
       clearAll,
+      clearResult,
       loadDemo,
       saveHistory,
       loadHistoryEntry,
@@ -215,6 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       history,
       calculate,
       clearAll,
+      clearResult,
       loadDemo,
       saveHistory,
       loadHistoryEntry,

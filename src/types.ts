@@ -181,12 +181,18 @@ export function emptyPart(): PartItem {
   return { id: uid('p'), length: '', length2: '', quantity: '', name: '' }
 }
 
+/** Округление длины до сотых. */
+export function roundLen(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.round(n * 100) / 100
+}
+
 /** Средняя длина отрезка (для торцов под углом). */
 export function partCalcLength(p: Pick<PartItem, 'length' | 'length2'>): number {
   const a = typeof p.length === 'number' ? p.length : 0
   const b = typeof p.length2 === 'number' && p.length2 > 0 ? p.length2 : 0
-  if (a > 0 && b > 0) return (a + b) / 2
-  return a
+  if (a > 0 && b > 0) return roundLen((a + b) / 2)
+  return roundLen(a)
 }
 
 /**
@@ -198,7 +204,7 @@ export function angleTipAllowance(parts: PartItem[]): number {
   for (const p of parts) {
     const a = typeof p.length === 'number' ? p.length : 0
     const b = typeof p.length2 === 'number' ? p.length2 : 0
-    if (a > 0 && b > 0) tip = Math.max(tip, Math.abs(a - b) / 2)
+    if (a > 0 && b > 0) tip = Math.max(tip, roundLen(Math.abs(a - b) / 2))
   }
   return tip
 }

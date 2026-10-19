@@ -1,15 +1,13 @@
 /**
  * Разбор текста и Excel/CSV в заготовки и отрезки.
- *
  * Строка: длина [количество] [название]
- * Секции по заголовкам «Заготовки» / «Отрезки» или имени листа.
- * Пример для UI: IMPORT_STOCK_EXAMPLE / IMPORT_PART_EXAMPLE.
  */
 import * as XLSX from 'xlsx'
 import type { PartItem, StockItem } from '../types'
 import { emptyPart, emptyStock, uid } from '../types'
 
-function parseNum(raw: string): number | null {
+export function parseNum(raw: string | number | null | undefined): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null
   let cleaned = String(raw ?? '')
     .trim()
     .replace(/\u00a0/g, ' ')
@@ -31,7 +29,8 @@ function parseNum(raw: string): number | null {
 function tokenizeLine(line: string): string[] {
   const t = line.trim()
   if (!t) return []
-  if (/^".*"$/.test(t) || (t.includes('"') && /[;,]/.test(t))) {
+
+  if (t.includes('"') && /[;,]/.test(t)) {
     const cells: string[] = []
     let cur = ''
     let inQ = false
@@ -48,19 +47,68 @@ function tokenizeLine(line: string): string[] {
       } else cur += ch
     }
     if (cur.trim()) cells.push(cur.trim())
-    if (cells.length) return cells
+    if (cells.length >= 2) return cells
   }
+
   if (/[\t;]/.test(t)) {
     return t.split(/[\t;]+/).map((c) => c.trim()).filter(Boolean)
   }
-  if (/^\s*\d/.test(t) && (t.match(/,/g) || []).length >= 1 && !/\s/.test(t.split(',')[0])) {
-    const parts = t.split(',').map((c) => c.trim()).filter(Boolean)
-    if (parts.length >= 2 && parseNum(parts[0]) !== null) return parts
+
+  if (/\s/.test(t)) {
+    return t.split(/\s+/).filter(Boolean)
   }
-  return t.split(/\s+/).filter(Boolean)
+
+  if (t.includes(',')) {
+    const parts = t.split(',').map((c) => c.trim()).filter(Boolean)
+    if (parts.length === 2) {
+      const a = parseNum(parts[0])
+      const b = parseNum(parts[1])
+      if (a !== null && b !== null && a === Math.floor(a) && b === Math.floor(b) && a >= 100) {
+        return parts
+      }
+      return [t]
+    }
+    if (parts.length >= 3 && parseNum(parts[0]) !== null) return parts
+  }
+
+  return [t]
 }
 
-function parseDataLine(line: string): { length: number; quantity: number | ''; name: string } | null {
+function detectHeader(line: string): boolean {
+  const t = line.trim()
+  if (!t) return true
+  if (/^\d/.test(t)) return false
+  return /длина|length|qty|количеств|название|name|заготов|отрез|№|nomer|priority|очер[её]д|ширина|высота/i.test(
+    t,
+  )
+}
+
+type ColMap = { length: number; quantity: number; name: number; length2: number }
+
+function mapHeaderColumns(cells: string[]): ColMap | null {
+  const lower = cells.map((c) => c.toLowerCase().trim())
+  const find = (...re: RegExp[]) => lower.findIndex((c) => re.some((r) => r.test(c)))
+
+  const length = find(/^длина$/, /длина\b/, /^length$/, /\blen\b/)
+  const quantity = find(/количеств/, /^кол-?во$/, /^qty$/, /^count$/, /^кол$/)
+  const name = find(/название/, /^name$/, /наимен/, /материал/)
+  const length2 = find(/2.?я.?длин/, /вторая.?длин/, /length\s*2/, /длин[аы]\s*2/)
+
+  if (length < 0 && quantity < 0) return null
+  return {
+    length: length >= 0 ? length : 0,
+    quantity: quantity >= 0 ? quantity : length >= 0 ? length + 1 : 1,
+    name: name >= 0 ? name : -1,
+    length2: length2 >= 0 ? length2 : -1,
+  }
+}
+
+function parseDataLine(line: string): {
+  length: number
+  quantity: number | ''
+  name: string
+  length2: number | ''
+} | null {
   const raw = line.trim()
   if (!raw || raw.startsWith('#') || /^пример/i.test(raw)) return null
   if (detectHeader(raw)) return null
@@ -70,33 +118,103 @@ function parseDataLine(line: string): { length: number; quantity: number | ''; n
   if (cells.length < 1) return null
 
   let offset = 0
-  if (
-    cells.length >= 3 &&
-    parseNum(cells[0]) !== null &&
-    parseNum(cells[1]) !== null &&
-    Number(cells[0]) > 0 &&
-    Number(cells[0]) < 1000 &&
-    parseNum(cells[1])! >= 10
-  ) {
-    const a = parseNum(cells[0])!
-    const b = parseNum(cells[1])!
-    if (a === Math.floor(a) && a <= 500 && b > a) offset = 1
+  if (cells.length >= 3) {
+    const a = parseNum(cells[0])
+    const b = parseNum(cells[1])
+    if (
+      a !== null &&
+      b !== null &&
+      a === Math.floor(a) &&
+      a >= 1 &&
+      a <= 500 &&
+      b > a &&
+      b >= 10
+    ) {
+      offset = 1
+    }
   }
 
   const length = parseNum(cells[offset])
   if (length === null || length <= 0) return null
 
   let quantity: number | '' = ''
-  let nameStart = offset + 1
-  if (cells.length > offset + 1) {
-    const q = parseNum(cells[offset + 1])
+  let idx = offset + 1
+  if (cells.length > idx) {
+    const q = parseNum(cells[idx])
     if (q !== null) {
       quantity = q
-      nameStart = offset + 2
+      idx += 1
     }
   }
-  const name = cells.slice(nameStart).join(' ')
-  return { length, quantity, name }
+
+  let length2: number | '' = ''
+  if (cells.length > idx) {
+    const maybeL2 = parseNum(cells[idx])
+    const restHasText = cells.slice(idx + 1).some((c) => parseNum(c) === null)
+    if (maybeL2 !== null && maybeL2 > 0 && restHasText) {
+      length2 = maybeL2
+      idx += 1
+    }
+  }
+
+  return {
+    length,
+    quantity,
+    length2,
+    name: cells.slice(idx).join(' ').trim(),
+  }
+}
+
+function rowFromCells(
+  cells: (string | number)[],
+  cols: ColMap | null,
+): { length: number; quantity: number | ''; name: string; length2: number | '' } | null {
+  if (cols) {
+    const length = parseNum(cells[cols.length])
+    if (length === null || length <= 0) return null
+    const quantity = cols.quantity >= 0 ? parseNum(cells[cols.quantity]) : null
+    const length2 = cols.length2 >= 0 ? parseNum(cells[cols.length2]) : null
+    const name =
+      cols.name >= 0 && cells[cols.name] != null ? String(cells[cols.name]).trim() : ''
+    return {
+      length,
+      quantity: quantity !== null && quantity > 0 ? quantity : quantity === 0 ? 0 : '',
+      length2: length2 !== null && length2 > 0 ? length2 : '',
+      name,
+    }
+  }
+  const line = cells.map((c) => String(c ?? '').trim()).filter(Boolean).join('\t')
+  return parseDataLine(line)
+}
+
+function toStock(parsed: {
+  length: number
+  quantity: number | ''
+  name: string
+}): StockItem {
+  return {
+    id: uid('s'),
+    length: parsed.length,
+    quantity: parsed.quantity === 0 ? '' : parsed.quantity,
+    name: parsed.name,
+    priority: 0,
+  }
+}
+
+function toPart(parsed: {
+  length: number
+  quantity: number | ''
+  name: string
+  length2?: number | ''
+}): PartItem {
+  const q = parsed.quantity
+  return {
+    id: uid('p'),
+    length: parsed.length,
+    length2: parsed.length2 ?? '',
+    quantity: q === '' || q === undefined || q <= 0 ? 1 : q,
+    name: parsed.name,
+  }
 }
 
 export function parseRowsAsStocks(text: string): StockItem[] {
@@ -104,13 +222,7 @@ export function parseRowsAsStocks(text: string): StockItem[] {
   for (const line of text.split(/\r?\n/)) {
     const parsed = parseDataLine(line)
     if (!parsed) continue
-    rows.push({
-      id: uid('s'),
-      length: parsed.length,
-      quantity: parsed.quantity,
-      name: parsed.name,
-      priority: 0,
-    })
+    rows.push(toStock(parsed))
   }
   return rows
 }
@@ -120,15 +232,42 @@ export function parseRowsAsParts(text: string): PartItem[] {
   for (const line of text.split(/\r?\n/)) {
     const parsed = parseDataLine(line)
     if (!parsed) continue
-    rows.push({
-      id: uid('p'),
-      length: parsed.length,
-      length2: '',
-      quantity: parsed.quantity === '' || parsed.quantity <= 0 ? 1 : parsed.quantity,
-      name: parsed.name,
-    })
+    rows.push(toPart(parsed))
   }
   return rows
+}
+
+/** Без секций: самые длинные → заготовки, иначе всё в отрезки. */
+function splitAutoRows(
+  parsedRows: { length: number; quantity: number | ''; name: string; length2: number | '' }[],
+): { stocks: StockItem[]; parts: PartItem[] } {
+  if (!parsedRows.length) return { stocks: [], parts: [] }
+  if (parsedRows.length === 1) {
+    const r = parsedRows[0]
+    if (r.quantity === '' && !r.name) return { stocks: [toStock(r)], parts: [] }
+    return { stocks: [], parts: [toPart(r)] }
+  }
+
+  const lengths = parsedRows.map((r) => r.length).sort((a, b) => a - b)
+  const maxLen = lengths[lengths.length - 1]
+  const secondMax = lengths[lengths.length - 2] || 0
+  const median = lengths[Math.floor(lengths.length / 2)]
+  const hasClearStock = maxLen >= median * 1.8 && maxLen >= secondMax * 1.4
+
+  if (!hasClearStock) {
+    return { stocks: [], parts: parsedRows.map(toPart) }
+  }
+
+  const stockThreshold = maxLen * 0.9
+  const stocks: StockItem[] = []
+  const parts: PartItem[] = []
+  for (const r of parsedRows) {
+    if (r.length >= stockThreshold) stocks.push(toStock(r))
+    else parts.push(toPart(r))
+  }
+
+  if (!parts.length || !stocks.length) return { stocks: [], parts: parsedRows.map(toPart) }
+  return { stocks, parts }
 }
 
 export function parseImportText(text: string): { stocks: StockItem[]; parts: PartItem[] } {
@@ -140,14 +279,25 @@ export function parseImportText(text: string): { stocks: StockItem[]; parts: Par
   let mode: 'auto' | 'stocks' | 'parts' = 'auto'
   const stockRows: StockItem[] = []
   const partRows: PartItem[] = []
+  const autoBuf: { length: number; quantity: number | ''; name: string; length2: number | '' }[] = []
+
+  const flushAuto = () => {
+    if (!autoBuf.length) return
+    const split = splitAutoRows(autoBuf)
+    stockRows.push(...split.stocks)
+    partRows.push(...split.parts)
+    autoBuf.length = 0
+  }
 
   for (const line of lines) {
     const lower = line.toLowerCase()
     if (/заготов|склад|stock|source/i.test(lower) && !/\d/.test(line)) {
+      flushAuto()
       mode = 'stocks'
       continue
     }
     if (/отрез|part|детал/i.test(lower) && !/\d/.test(line)) {
+      flushAuto()
       mode = 'parts'
       continue
     }
@@ -156,98 +306,117 @@ export function parseImportText(text: string): { stocks: StockItem[]; parts: Par
     if (!parsed) continue
 
     if (mode === 'stocks') {
-      stockRows.push({
-        id: uid('s'),
-        length: parsed.length,
-        quantity: parsed.quantity,
-        name: parsed.name,
-        priority: 0,
-      })
+      stockRows.push(toStock(parsed))
     } else if (mode === 'parts') {
-      partRows.push({
-        id: uid('p'),
-        length: parsed.length,
-        length2: '',
-        quantity: parsed.quantity === '' || parsed.quantity <= 0 ? 1 : parsed.quantity,
-        name: parsed.name,
-      })
-    } else if (parsed.quantity === '' && !parsed.name) {
-      stockRows.push({
-        id: uid('s'),
-        length: parsed.length,
-        quantity: '',
-        name: '',
-        priority: 0,
-      })
+      partRows.push(toPart(parsed))
     } else {
-      partRows.push({
-        id: uid('p'),
-        length: parsed.length,
-        length2: '',
-        quantity: parsed.quantity === '' || parsed.quantity <= 0 ? 1 : parsed.quantity,
-        name: parsed.name,
-      })
+      autoBuf.push(parsed)
     }
   }
+  flushAuto()
 
   return { stocks: stockRows, parts: partRows }
 }
 
-function sheetToLines(sheet: XLSX.WorkSheet): string[] {
+function sheetToMatrix(sheet: XLSX.WorkSheet): (string | number)[][] {
   const rows = XLSX.utils.sheet_to_json<(string | number | null | undefined)[]>(sheet, {
     header: 1,
     defval: '',
-    raw: false,
-  }) as (string | number)[][]
+    raw: true,
+  }) as (string | number | null | undefined)[][]
 
-  return rows
-    .map((row) =>
-      row
-        .map((cell) => String(cell ?? '').trim())
-        .filter((c) => c !== '')
-        .join('\t'),
-    )
-    .filter(Boolean)
+  return rows.map((row) =>
+    (row || []).map((cell) => {
+      if (cell == null || cell === '') return ''
+      if (typeof cell === 'number') return cell
+      return String(cell).trim()
+    }),
+  )
 }
 
-function detectHeader(line: string): boolean {
-  const t = line.trim()
-  if (/^\d/.test(t)) return false
-  return /длина|length|qty|количеств|название|name|заготов|отрез|№|nomer|priority|очер[её]д/i.test(t)
+function parseMatrix(
+  matrix: (string | number)[][],
+  force: 'stocks' | 'parts' | 'auto',
+): { stocks: StockItem[]; parts: PartItem[] } {
+  if (!matrix.length) return { stocks: [], parts: [] }
+
+  const first = matrix[0].map((c) => String(c))
+  const header = detectHeader(first.join(' '))
+  const cols = header ? mapHeaderColumns(first) : null
+  const dataRows = header ? matrix.slice(1) : matrix
+
+  const parsedRows: { length: number; quantity: number | ''; name: string; length2: number | '' }[] =
+    []
+  for (const row of dataRows) {
+    if (!row.some((c) => String(c).trim() !== '')) continue
+    const p = rowFromCells(row, cols)
+    if (p) parsedRows.push(p)
+  }
+
+  if (force === 'stocks') return { stocks: parsedRows.map(toStock), parts: [] }
+  if (force === 'parts') return { stocks: [], parts: parsedRows.map(toPart) }
+  return splitAutoRows(parsedRows)
 }
 
 export async function parseSpreadsheetFile(
   file: File,
   target: 'stocks' | 'parts' | 'auto' = 'auto',
 ): Promise<{ stocks: StockItem[]; parts: PartItem[] }> {
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.txt') || name.endsWith('.csv')) {
+    const text = await file.text()
+    if (target === 'stocks') return { stocks: parseRowsAsStocks(text), parts: [] }
+    if (target === 'parts') return { stocks: [], parts: parseRowsAsParts(text) }
+    return parseImportText(text)
+  }
+
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array' })
 
-  const allLines: string[] = []
-  for (const name of workbook.SheetNames) {
-    const sheet = workbook.Sheets[name]
-    const lines = sheetToLines(sheet)
-    const start = lines.length && detectHeader(lines[0]) ? 1 : 0
-    if (/заготов|склад|stock|source/i.test(name)) {
-      allLines.push('Заготовки')
-      allLines.push(...lines.slice(start))
-    } else if (/отрез|part|детал/i.test(name)) {
-      allLines.push('Отрезки')
-      allLines.push(...lines.slice(start))
+  const stocks: StockItem[] = []
+  const parts: PartItem[] = []
+  const unlabeled: { stocks: StockItem[]; parts: PartItem[] }[] = []
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    const matrix = sheetToMatrix(sheet)
+    if (!matrix.length) continue
+
+    if (/заготов|склад|stock|source/i.test(sheetName)) {
+      const r = parseMatrix(matrix, 'stocks')
+      stocks.push(...r.stocks)
+    } else if (/отрез|part|детал/i.test(sheetName)) {
+      const r = parseMatrix(matrix, 'parts')
+      parts.push(...r.parts)
+    } else if (target === 'stocks') {
+      const r = parseMatrix(matrix, 'stocks')
+      stocks.push(...r.stocks)
+    } else if (target === 'parts') {
+      const r = parseMatrix(matrix, 'parts')
+      parts.push(...r.parts)
     } else {
-      allLines.push(...lines.slice(start))
+      unlabeled.push(parseMatrix(matrix, 'auto'))
     }
   }
 
-  const text = allLines.join('\n')
+  for (const u of unlabeled) {
+    stocks.push(...u.stocks)
+    parts.push(...u.parts)
+  }
 
-  if (target === 'stocks') {
-    return { stocks: parseRowsAsStocks(text), parts: [] }
+  if (target === 'auto' && !stocks.length && !parts.length) {
+    const allLines: string[] = []
+    for (const sheetName of workbook.SheetNames) {
+      const matrix = sheetToMatrix(workbook.Sheets[sheetName])
+      for (const row of matrix) {
+        const line = row.map((c) => String(c ?? '').trim()).filter(Boolean).join('\t')
+        if (line) allLines.push(line)
+      }
+    }
+    return parseImportText(allLines.join('\n'))
   }
-  if (target === 'parts') {
-    return { stocks: [], parts: parseRowsAsParts(text) }
-  }
-  return parseImportText(text)
+
+  return { stocks, parts }
 }
 
 export function withTrailingEmptyStock(rows: StockItem[]): StockItem[] {

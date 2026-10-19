@@ -16,7 +16,7 @@ import type {
   SolveResult,
   StockItem,
 } from '../types'
-import { angleTipAllowance, partCalcLength } from '../types'
+import { angleTipAllowance, partCalcLength, roundLen } from '../types'
 
 type PartType = {
   length: number
@@ -73,8 +73,8 @@ function prepareStocks(
   const options: StockOption[] = stocks
     .filter((s) => typeof s.length === 'number' && s.length > 0)
     .map((s) => ({
-      length: s.length as number,
-      tipAllowance,
+      length: roundLen(s.length as number),
+      tipAllowance: roundLen(tipAllowance),
       name: s.name,
       priority: s.priority || 0,
       remaining: s.quantity === '' || s.quantity === undefined ? Infinity : Number(s.quantity),
@@ -142,8 +142,9 @@ function packBar(
       .sort((a, b) => b.t.length - a.t.length)
     const out: PlacedPart[] = []
     for (const { t, c } of ordered) {
+      const len = roundLen(t.length)
       for (let k = 0; k < c; k++) {
-        out.push({ length: t.length, name: t.name, partKey: t.partKey })
+        out.push({ length: len, name: t.name, partKey: t.partKey })
       }
     }
     return out
@@ -276,21 +277,23 @@ export function solveCutting(
       if (t) t.remaining -= 1
     }
 
-    const partsLength = placed.reduce((s, p) => s + p.length, 0)
+    const roundedParts = placed.map((p) => ({ ...p, length: roundLen(p.length) }))
+    const partsLength = roundLen(roundedParts.reduce((s, p) => s + p.length, 0))
     let usedWithKerf = 0
-    placed.forEach((p, idx) => {
+    roundedParts.forEach((p, idx) => {
       usedWithKerf += idx === 0 ? p.length : p.length + kerf
     })
+    usedWithKerf = roundLen(usedWithKerf)
     const cap = effectiveCapacity(opt.length, trimming, opt.tipAllowance)
-    const waste = Math.max(0, cap - usedWithKerf)
+    const waste = Math.max(0, roundLen(cap - usedWithKerf))
 
     patterns.push({
       stockLength: opt.length,
       stockName: opt.name,
-      parts: placed,
+      parts: roundedParts,
       usedLength: partsLength,
       waste,
-      cutCount: placed.length,
+      cutCount: roundedParts.length,
     })
   }
 
@@ -368,17 +371,46 @@ export function solveCutting(
   }
 }
 
+function asNum(v: unknown): number | '' {
+  if (v === '' || v === null || v === undefined) return ''
+  if (typeof v === 'number') return Number.isFinite(v) ? v : ''
+  const n = Number(String(v).trim().replace(/\s/g, '').replace(',', '.'))
+  return Number.isFinite(n) ? n : ''
+}
+
+function normalizePart(p: PartItem): PartItem {
+  return {
+    ...p,
+    length: asNum(p.length),
+    length2: asNum(p.length2 ?? ''),
+    quantity: asNum(p.quantity),
+    name: p.name || '',
+  }
+}
+
+function normalizeStock(s: StockItem): StockItem {
+  return {
+    ...s,
+    length: asNum(s.length),
+    quantity: asNum(s.quantity),
+    name: s.name || '',
+    priority: typeof s.priority === 'number' ? s.priority : Number(s.priority) || 0,
+  }
+}
+
 function isBlankPart(p: PartItem): boolean {
-  const noLen = partCalcLength(p) <= 0
-  const noQty = p.quantity === '' || p.quantity === undefined || p.quantity === 0
-  const noL2 = p.length2 === '' || p.length2 === undefined || p.length2 === 0
-  return noLen && noQty && noL2 && !p.name
+  const n = normalizePart(p)
+  const noLen = partCalcLength(n) <= 0
+  const noQty = n.quantity === '' || n.quantity === 0
+  const noL2 = n.length2 === '' || n.length2 === 0
+  return noLen && noQty && noL2 && !n.name
 }
 
 function isBlankStock(s: StockItem): boolean {
-  const noLen = s.length === '' || s.length === undefined || s.length === 0
-  const noQty = s.quantity === '' || s.quantity === undefined || s.quantity === 0
-  return noLen && noQty && !s.name
+  const n = normalizeStock(s)
+  const noLen = n.length === '' || n.length === 0
+  const noQty = n.quantity === '' || n.quantity === 0
+  return noLen && noQty && !n.name
 }
 
 /** Убрать пустые строки таблиц перед расчётом. */
@@ -387,8 +419,8 @@ export function sanitizeInputs(
   parts: PartItem[],
 ): { stocks: StockItem[]; parts: PartItem[] } {
   return {
-    stocks: stocks.filter((s) => !isBlankStock(s)),
-    parts: parts.filter((p) => !isBlankPart(p)),
+    stocks: stocks.map(normalizeStock).filter((s) => !isBlankStock(s)),
+    parts: parts.map(normalizePart).filter((p) => !isBlankPart(p)),
   }
 }
 
@@ -404,7 +436,8 @@ export function validateInputs(stocks: StockItem[], parts: PartItem[]): string |
   for (const p of clean.parts) {
     const calcLen = partCalcLength(p)
     const hasLen = calcLen > 0
-    const hasQty = typeof p.quantity === 'number' && p.quantity > 0
+    const qty = asNum(p.quantity)
+    const hasQty = typeof qty === 'number' && qty > 0
 
     if (hasLen && hasQty) {
       validCount++

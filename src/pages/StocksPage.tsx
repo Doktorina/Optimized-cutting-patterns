@@ -11,8 +11,11 @@ import { ResultPanel } from '../components/ResultPanel'
 import { StockTable } from '../components/StockTable'
 import { useApp } from '../context/AppContext'
 
-function qtySum(values: Array<number | ''>): number {
-  return values.reduce<number>((s, v) => s + (typeof v === 'number' && v > 0 ? v : 0), 0)
+function qtySum(values: Array<number | '' | string>): number {
+  return values.reduce<number>((s, v) => {
+    const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(',', '.'))
+    return s + (Number.isFinite(n) && n > 0 ? n : 0)
+  }, 0)
 }
 
 export function StocksPage() {

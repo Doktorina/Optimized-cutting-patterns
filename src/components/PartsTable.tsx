@@ -8,9 +8,16 @@ type Props = {
 }
 
 function parseOptionalNumber(value: string): number | '' {
-  if (value.trim() === '') return ''
-  const n = Number(value.replace(',', '.'))
+  const cleaned = value.trim().replace(/\s/g, '').replace(',', '.')
+  if (cleaned === '') return ''
+  const n = Number(cleaned)
   return Number.isFinite(n) ? n : ''
+}
+
+function numOrEmpty(v: number | '' | string | null | undefined): number | '' {
+  if (v === '' || v === null || v === undefined) return ''
+  if (typeof v === 'number') return Number.isFinite(v) ? v : ''
+  return parseOptionalNumber(String(v))
 }
 
 export function PartsTable({ parts, onChange }: Props) {
@@ -46,33 +53,34 @@ export function PartsTable({ parts, onChange }: Props) {
         </thead>
         <tbody>
           {parts.map((row, index) => {
-            const calc = partCalcLength(row)
+            const length = numOrEmpty(row.length)
+            const length2 = numOrEmpty(row.length2)
+            const quantity = numOrEmpty(row.quantity)
+            const calc = partCalcLength({ length, length2 })
             const angled =
-              typeof row.length === 'number' &&
-              row.length > 0 &&
-              typeof row.length2 === 'number' &&
-              row.length2 > 0
+              typeof length === 'number' &&
+              length > 0 &&
+              typeof length2 === 'number' &&
+              length2 > 0
             return (
               <tr key={row.id}>
                 <td className="row-num">{index + 1}</td>
                 <td>
                   <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    placeholder="79"
-                    value={row.length}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder=""
+                    value={length === '' ? '' : String(length).replace('.', ',')}
                     onChange={(e) => update(row.id, { length: parseOptionalNumber(e.target.value) })}
                     aria-label="Длина отрезка"
                   />
                 </td>
                 <td>
                   <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    placeholder="75"
-                    value={row.length2 ?? ''}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder=""
+                    value={length2 === '' ? '' : String(length2).replace('.', ',')}
                     onChange={(e) => update(row.id, { length2: parseOptionalNumber(e.target.value) })}
                     aria-label="Вторая длина торца под углом"
                   />
@@ -82,11 +90,10 @@ export function PartsTable({ parts, onChange }: Props) {
                 </td>
                 <td>
                   <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    placeholder="7"
-                    value={row.quantity}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder=""
+                    value={quantity === '' ? '' : String(quantity)}
                     onChange={(e) =>
                       update(row.id, { quantity: parseOptionalNumber(e.target.value) })
                     }

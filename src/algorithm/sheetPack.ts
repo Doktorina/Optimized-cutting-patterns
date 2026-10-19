@@ -25,12 +25,16 @@ export type SheetPartDef = {
 export type PlacedRect = {
   id: string
   name: string
+  typeKey: string
+  typeIndex: number
   x: number
   y: number
   width: number
   height: number
   rotated: boolean
 }
+
+export type SheetLayoutMode = 'length' | 'width' | 'optimal'
 
 export type PackedSheet = {
   sheetWidth: number
@@ -257,6 +261,8 @@ function packMaxRects(
     const rect: PlacedRect = {
       id: piece.id,
       name: piece.name,
+      typeKey: piece.key,
+      typeIndex: 0,
       x: bestFr.x,
       y: bestFr.y,
       width: bestOri.w,
@@ -358,6 +364,8 @@ function packShelves(
     placed.push({
       id: piece.id,
       name: piece.name,
+      typeKey: piece.key,
+      typeIndex: 0,
       x,
       y: shelfY,
       width: chosen.w,
@@ -368,6 +376,39 @@ function packShelves(
   }
 
   return { placed, leftover }
+}
+
+function packShelvesVertical(
+  sheetW: number,
+  sheetH: number,
+  pieces: Piece[],
+  kerf: number,
+): { placed: PlacedRect[]; leftover: Piece[] } {
+  const swapped = pieces.map((p) => ({
+    ...p,
+    width: p.height,
+    height: p.width,
+  }))
+  const { placed, leftover } = packShelves(sheetH, sheetW, swapped, kerf, 'width')
+  return {
+    leftover,
+    placed: placed.map((p) => ({
+      ...p,
+      x: p.y,
+      y: p.x,
+      width: p.height,
+      height: p.width,
+      rotated: !p.rotated,
+    })),
+  }
+}
+
+function withTypeIndices(placed: PlacedRect[]): PlacedRect[] {
+  const order = new Map<string, number>()
+  for (const p of placed) {
+    if (!order.has(p.typeKey)) order.set(p.typeKey, order.size + 1)
+  }
+  return placed.map((p) => ({ ...p, typeIndex: order.get(p.typeKey) || 1 }))
 }
 
 function packingCompactness(placed: PlacedRect[]): number {
@@ -391,7 +432,7 @@ function makeSheet(stock: SheetStock, placed: PlacedRect[]): PackedSheet {
     sheetWidth: stock.width,
     sheetHeight: stock.height,
     sheetName: stock.name,
-    parts: placed,
+    parts: withTypeIndices(placed),
     usedArea,
     wasteArea: Math.max(0, area - usedArea),
     usefulPercent: area > 0 ? (usedArea / area) * 100 : 0,
@@ -402,6 +443,7 @@ function packAllSheets(
   stock: SheetStock,
   pieces: Piece[],
   kerf: number,
+  margin: number,
   packOne: (
     w: number,
     h: number,
@@ -413,14 +455,19 @@ function packAllSheets(
   let remaining = [...pieces]
   let usedCount = 0
   const limit = stock.quantity == null ? 500 : stock.quantity
+  const m = Math.max(0, margin)
+  const innerW = Math.max(0, stock.width - 2 * m)
+  const innerH = Math.max(0, stock.height - 2 * m)
 
   while (remaining.length && usedCount < limit) {
-    const { placed, leftover } = packOne(stock.width, stock.height, remaining, kerf)
+    if (innerW <= 0 || innerH <= 0) break
+    const { placed, leftover } = packOne(innerW, innerH, remaining, kerf)
     if (!placed.length) {
       remaining = leftover
       break
     }
-    sheets.push(makeSheet(stock, placed))
+    const shifted = placed.map((p) => ({ ...p, x: p.x + m, y: p.y + m }))
+    sheets.push(makeSheet(stock, shifted))
     remaining = leftover
     usedCount++
   }
@@ -477,52 +524,12 @@ function summarize(
   }
 }
 
-/** Собрать варианты укладки и отсортировать: лучший первым. */
-export function solveSheetVariants(
-  stock: SheetStock,
-  parts: SheetPartDef[],
-  kerf: number,
-): PackVariant[] {
-  const pieces = expandPieces(parts.filter((p) => p.width > 0 && p.height > 0 && p.quantity > 0))
-  if (!pieces.length || stock.width <= 0 || stock.height <= 0) return []
+export type SheetSolveOptions = {
+  margin?: number
+  mode?: SheetLayoutMode
+}
 
-  const a = packAllSheets(stock, pieces, kerf, (w, h, pcs, k) => packMaxRects(w, h, pcs, k, 'bssf'))
-  const b = packAllSheets(stock, pieces, kerf, (w, h, pcs, k) => packMaxRects(w, h, pcs, k, 'baf'))
-  const c = packAllSheets(stock, pieces, kerf, (w, h, pcs, k) => packShelves(w, h, pcs, k, 'height'))
-  const d = packAllSheets(stock, pieces, kerf, (w, h, pcs, k) => packShelves(w, h, pcs, k, 'area'))
-
-  const variants = [
-    summarize(
-      'maxrects-bssf',
-      'Плотная укладка',
-      'Максимум деталей на листе, минимум отходов. Детали могут стоять вразброс — удобно для станка и ручной разметки.',
-      a.sheets,
-      a.unplaced,
-    ),
-    summarize(
-      'maxrects-baf',
-      'С крупными остатками',
-      'Старается оставить цельные свободные зоны — удобно, если остаток пойдёт в следующий заказ.',
-      b.sheets,
-      b.unplaced,
-    ),
-    summarize(
-      'shelves-h',
-      'Рядами по высоте',
-      'Детали выстраиваются горизонтальными рядами. Удобно пилить дисковой пилой ряд за рядом.',
-      c.sheets,
-      c.unplaced,
-    ),
-    summarize(
-      'shelves-a',
-      'Рядами, сначала крупные',
-      'Сначала кладутся крупные детали, потом заполняются ряды. Баланс между отходами и удобством реза.',
-      d.sheets,
-      d.unplaced,
-    ),
-  ]
-
-  // Лучший: меньше неразмещённых → меньше листов → выше КПИ → меньше отходов → плотнее укладка
+function sortVariants(variants: PackVariant[]): PackVariant[] {
   return variants.sort(
     (x, y) =>
       x.unplacedCount - y.unplacedCount ||
@@ -531,4 +538,102 @@ export function solveSheetVariants(
       x.totalWasteArea - y.totalWasteArea ||
       y.compactness - x.compactness,
   )
+}
+
+/** Собрать варианты укладки и отсортировать: лучший первым. */
+export function solveSheetVariants(
+  stock: SheetStock,
+  parts: SheetPartDef[],
+  kerf: number,
+  options: SheetSolveOptions = {},
+): PackVariant[] {
+  const pieces = expandPieces(parts.filter((p) => p.width > 0 && p.height > 0 && p.quantity > 0))
+  if (!pieces.length || stock.width <= 0 || stock.height <= 0) return []
+
+  const margin = Math.max(0, options.margin || 0)
+  const pack = (
+    packOne: (
+      w: number,
+      h: number,
+      pcs: Piece[],
+      kerf: number,
+    ) => { placed: PlacedRect[]; leftover: Piece[] },
+  ) => packAllSheets(stock, pieces, kerf, margin, packOne)
+
+  const mode = options.mode
+
+  if (mode === 'length') {
+    const r = pack((w, h, pcs, k) => packShelves(w, h, pcs, k, 'height'))
+    return [
+      summarize(
+        'length',
+        'По длине',
+        'Горизонтальные ряды вдоль длины листа — удобно пилить ряд за рядом.',
+        r.sheets,
+        r.unplaced,
+      ),
+    ]
+  }
+
+  if (mode === 'width') {
+    const r = pack((w, h, pcs, k) => packShelvesVertical(w, h, pcs, k))
+    return [
+      summarize(
+        'width',
+        'По ширине',
+        'Вертикальные ряды вдоль ширины листа.',
+        r.sheets,
+        r.unplaced,
+      ),
+    ]
+  }
+
+  if (mode === 'optimal') {
+    const a = pack((w, h, pcs, k) => packMaxRects(w, h, pcs, k, 'bssf'))
+    const b = pack((w, h, pcs, k) => packMaxRects(w, h, pcs, k, 'baf'))
+    const c = pack((w, h, pcs, k) => packShelves(w, h, pcs, k, 'height'))
+    const d = pack((w, h, pcs, k) => packShelvesVertical(w, h, pcs, k))
+    return sortVariants([
+      summarize('maxrects-bssf', 'Оптимально', 'Плотная укладка с минимумом отходов.', a.sheets, a.unplaced),
+      summarize('maxrects-baf', 'С крупными остатками', 'Старается оставить цельные свободные зоны.', b.sheets, b.unplaced),
+      summarize('shelves-h', 'Рядами по длине', 'Горизонтальные ряды.', c.sheets, c.unplaced),
+      summarize('shelves-v', 'Рядами по ширине', 'Вертикальные ряды.', d.sheets, d.unplaced),
+    ])
+  }
+
+  const a = pack((w, h, pcs, k) => packMaxRects(w, h, pcs, k, 'bssf'))
+  const b = pack((w, h, pcs, k) => packMaxRects(w, h, pcs, k, 'baf'))
+  const c = pack((w, h, pcs, k) => packShelves(w, h, pcs, k, 'height'))
+  const d = pack((w, h, pcs, k) => packShelves(w, h, pcs, k, 'area'))
+
+  return sortVariants([
+    summarize(
+      'maxrects-bssf',
+      'Плотная укладка',
+      'Максимум деталей на листе, минимум отходов.',
+      a.sheets,
+      a.unplaced,
+    ),
+    summarize(
+      'maxrects-baf',
+      'С крупными остатками',
+      'Старается оставить цельные свободные зоны.',
+      b.sheets,
+      b.unplaced,
+    ),
+    summarize(
+      'shelves-h',
+      'Рядами по высоте',
+      'Детали выстраиваются горизонтальными рядами.',
+      c.sheets,
+      c.unplaced,
+    ),
+    summarize(
+      'shelves-a',
+      'Рядами, сначала крупные',
+      'Сначала крупные детали, потом заполнение рядов.',
+      d.sheets,
+      d.unplaced,
+    ),
+  ])
 }

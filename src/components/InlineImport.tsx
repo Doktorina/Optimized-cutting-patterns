@@ -18,7 +18,7 @@ type Props = {
 }
 
 export function InlineImport({ open, onClose }: Props) {
-  const { setStocks, setParts } = useApp()
+  const { setStocks, setParts, clearResult } = useApp()
   const [stockText, setStockText] = useState('')
   const [partText, setPartText] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -33,12 +33,14 @@ export function InlineImport({ open, onClose }: Props) {
   const applyStocks = (rows: ReturnType<typeof parseRowsAsStocks>) => {
     if (!rows.length) return false
     setStocks(withTrailingEmptyStock(rows))
+    clearResult()
     return true
   }
 
   const applyParts = (rows: ReturnType<typeof parseRowsAsParts>) => {
     if (!rows.length) return false
     setParts(withTrailingEmptyPart(rows))
+    clearResult()
     return true
   }
 
@@ -120,11 +122,10 @@ export function InlineImport({ open, onClose }: Props) {
         (target === 'parts' || target === 'auto') && parts.length ? applyParts(parts) : false
 
       if (!okS && !okP) {
-        setError(
-          `В «${file.name}» нет данных. Нужны колонки: длина, количество, название (или строки «6000 10 …»).`,
-        )
+        setError(`В «${file.name}» нет данных. Нужны колонки: длина, количество, название.`)
         return
       }
+
       setStatus(
         `«${file.name}»: ${[
           okS ? `заготовок ${stocks.length}` : null,
@@ -169,7 +170,7 @@ export function InlineImport({ open, onClose }: Props) {
             выберите на диске
           </button>
         </p>
-        <p className="hint">Авто-разбор: листы «Заготовки» / «Отрезки» или одна таблица с длинами</p>
+        <p className="hint">Листы «Заготовки» / «Отрезки», колонки: длина, кол-во, название</p>
         <input
           ref={fileRef}
           type="file"

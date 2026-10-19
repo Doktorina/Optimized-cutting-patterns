@@ -8,8 +8,9 @@ type Props = {
 }
 
 function parseOptionalNumber(value: string): number | '' {
-  if (value.trim() === '') return ''
-  const n = Number(value.replace(',', '.'))
+  const cleaned = value.trim().replace(/\s/g, '').replace(',', '.')
+  if (cleaned === '') return ''
+  const n = Number(cleaned)
   return Number.isFinite(n) ? n : ''
 }
 
@@ -49,20 +50,19 @@ export function StockTable({ stocks, onChange }: Props) {
               <td className="row-num">{index + 1}</td>
               <td>
                 <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  placeholder="6000"
-                  value={row.length}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder=""
+                  value={row.length === '' ? '' : String(row.length).replace('.', ',')}
                   onChange={(e) => update(row.id, { length: parseOptionalNumber(e.target.value) })}
                 />
               </td>
               <td className="qty-cell">
                 <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={row.quantity}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder=""
+                  value={row.quantity === '' ? '' : String(row.quantity)}
                   onChange={(e) => update(row.id, { quantity: parseOptionalNumber(e.target.value) })}
                 />
                 {row.quantity === '' && <span className="qty-infinite">без лимита</span>}

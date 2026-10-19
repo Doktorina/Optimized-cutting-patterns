@@ -1,5 +1,6 @@
 /** Визуальная схема 1D + текст «размеры от нуля» / текстовая схема. */
 import type { GroupedPattern, Settings } from '../types'
+import { roundLen } from '../types'
 
 type Props = {
   grouped: GroupedPattern[]
@@ -7,29 +8,34 @@ type Props = {
 }
 
 function formatLen(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, '')
+  const r = roundLen(n)
+  return Number.isInteger(r) ? String(r) : r.toFixed(2).replace(/\.?0+$/, '')
 }
 
 function mergeLabels(parts: { length: number; name: string }[], merge: boolean) {
   if (!merge) {
-    return parts.map((p) => ({
-      length: p.length,
-      count: 1,
-      label: p.name ? `${formatLen(p.length)} ${p.name}` : formatLen(p.length),
-      width: p.length,
-    }))
+    return parts.map((p) => {
+      const length = roundLen(p.length)
+      return {
+        length,
+        count: 1,
+        label: p.name ? `${formatLen(length)} ${p.name}` : formatLen(length),
+        width: length,
+      }
+    })
   }
 
   const out: { length: number; count: number; label: string; width: number }[] = []
   for (const p of parts) {
+    const length = roundLen(p.length)
     const last = out[out.length - 1]
-    const keyLabel = p.name ? `${formatLen(p.length)} ${p.name}` : formatLen(p.length)
-    if (last && last.length === p.length && last.label.replace(/ \(x\d+\)$/, '') === keyLabel) {
+    const keyLabel = p.name ? `${formatLen(length)} ${p.name}` : formatLen(length)
+    if (last && last.length === length && last.label.replace(/ \(x\d+\)$/, '') === keyLabel) {
       last.count += 1
-      last.width += p.length
+      last.width = roundLen(last.width + length)
       last.label = `${keyLabel} (x${last.count})`
     } else {
-      out.push({ length: p.length, count: 1, label: keyLabel, width: p.length })
+      out.push({ length, count: 1, label: keyLabel, width: length })
     }
   }
   return out
@@ -108,6 +114,10 @@ export function CuttingMap({ grouped, settings }: Props) {
   )
 }
 
+function usedFromParts(parts: { length: number }[]): number {
+  return roundLen(parts.reduce((s, p) => s + roundLen(p.length), 0))
+}
+
 export function textScheme(grouped: GroupedPattern[], settings: Settings): string {
   return grouped
     .map((g, gi) => {
@@ -119,9 +129,10 @@ export function textScheme(grouped: GroupedPattern[], settings: Settings): strin
           ? `№ ${gi + 1}, # ${startIndex}-${endIndex}. Отрезки: ${pattern.parts.length} шт.`
           : `№ ${gi + 1}, # ${startIndex}. Отрезки: ${pattern.parts.length} шт.`
         : `Отрезки: ${pattern.parts.length} шт.`
+      const used = usedFromParts(pattern.parts)
       const waste =
         pattern.waste > 0
-          ? ` = ${formatLen(pattern.usedLength)} (остаток ${formatLen(pattern.waste)})`
+          ? ` = ${formatLen(used)} (остаток ${formatLen(pattern.waste)})`
           : ` = ${formatLen(pattern.stockLength)}`
       return `${head}\n${formatLen(pattern.stockLength)} x ${count} [ ${body} ]${waste}`
     })
@@ -135,7 +146,7 @@ export function sizesFromZero(grouped: GroupedPattern[], settings: Settings): st
       let acc = 0
       const marks = [0]
       for (const p of pattern.parts) {
-        acc += p.length
+        acc = roundLen(acc + roundLen(p.length))
         marks.push(acc)
       }
       const head = settings.numberLayout
