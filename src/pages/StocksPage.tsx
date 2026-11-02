@@ -10,6 +10,7 @@ import { PartsTable } from '../components/PartsTable'
 import { ResultPanel } from '../components/ResultPanel'
 import { StockTable } from '../components/StockTable'
 import { useApp } from '../context/AppContext'
+import { printCuttingResult, saveCuttingResultPdf } from '../export/printResult'
 
 function qtySum(values: Array<number | '' | string>): number {
   return values.reduce<number>((s, v) => {
@@ -117,6 +118,26 @@ export function StocksPage() {
           <h2>Результат</h2>
           {result && !error && (
             <div className="data-section-actions">
+              <button
+                type="button"
+                className="btn btn-on-blue"
+                onClick={() =>
+                  printCuttingResult({ result, settings, stocks, parts, cuttingName })
+                }
+                title="Печать схемы раскроя"
+              >
+                Печать
+              </button>
+              <button
+                type="button"
+                className="btn btn-on-blue"
+                onClick={() =>
+                  saveCuttingResultPdf({ result, settings, stocks, parts, cuttingName })
+                }
+                title="Сохранить как PDF (в диалоге печати выберите «Сохранить как PDF»)"
+              >
+                .PDF
+              </button>
               <button type="button" className="btn btn-on-blue" onClick={saveHistory}>
                 В историю
               </button>

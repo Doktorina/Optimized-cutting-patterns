@@ -1447,3 +1447,35 @@ button.sheet-preview {
     font-size: 0.78rem;
   }
 }
+
+/* Печать / PDF из браузера */
+@media print {
+  .sidebar,
+  .page-toolbar,
+  .data-section-actions,
+  .page-footer-actions,
+  .inline-import,
+  .table-actions,
+  .btn {
+    display: none !important;
+  }
+
+  .app-shell,
+  .page,
+  .main {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .data-section:not(.result-section) {
+    display: none !important;
+  }
+
+  .result-section {
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+}
