@@ -253,33 +253,40 @@ export function buildResultReportHtml(opts: {
 
   <div class="footer">Раскрой · локальный калькулятор оптимального раскроя</div>
   <script>
-    window.onload = function () {
-      if (location.search.indexOf('autoprint=1') >= 0) {
-        setTimeout(function () { window.focus(); window.print(); }, 200);
+    window.addEventListener('load', function () {
+      if (window.__RASKROY_AUTOPRINT__) {
+        setTimeout(function () { window.focus(); window.print(); }, 250);
       }
-    };
+    });
   </script>
 </body>
 </html>`
 }
 
 function openReportWindow(html: string, autoprint: boolean): void {
-  const w = window.open('', '_blank', 'noopener,noreferrer,width=960,height=800')
+  const payload = autoprint
+    ? html.replace(
+        '</head>',
+        '<script>window.__RASKROY_AUTOPRINT__=true;</script></head>',
+      )
+    : html
+
+  // Blob URL надёжнее document.write + noopener (иначе Chrome открывает пустой about:blank)
+  const blob = new Blob([payload], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const w = window.open(url, '_blank', 'width=960,height=800')
   if (!w) {
+    URL.revokeObjectURL(url)
     window.alert('Разрешите всплывающие окна, чтобы печатать или сохранить PDF.')
     return
   }
-  const doc = w.document
-  doc.open()
-  doc.write(
-    autoprint
-      ? html.replace(
-          'location.search.indexOf(\'autoprint=1\') >= 0',
-          'true',
-        )
-      : html,
+  w.addEventListener(
+    'load',
+    () => {
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    },
+    { once: true },
   )
-  doc.close()
 }
 
 type ReportOpts = {
