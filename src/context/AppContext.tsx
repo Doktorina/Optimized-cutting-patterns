@@ -41,10 +41,12 @@ const DATA_KEY = 'raskroy-line-data-v1'
 const ENV_CUT_TOKEN = String(import.meta.env.VITE_CUT_API_TOKEN || '').trim()
 
 function withEnvCutDefaults(settings: Settings): Settings {
-  if (settings.cutApiToken?.trim() || !ENV_CUT_TOKEN) return settings
+  // В production токен из env всегда включает один и тот же сервис расчёта
+  // (как на localhost), иначе у пользователей остаётся слабый локальный алгоритм.
+  if (!ENV_CUT_TOKEN) return settings
   return {
     ...settings,
-    cutApiToken: ENV_CUT_TOKEN,
+    cutApiToken: settings.cutApiToken?.trim() || ENV_CUT_TOKEN,
     useRemoteCutApi: true,
   }
 }
