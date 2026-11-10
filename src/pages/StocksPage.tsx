@@ -131,12 +131,18 @@ export function StocksPage() {
               <button
                 type="button"
                 className="btn btn-on-blue"
-                onClick={() =>
-                  saveCuttingResultPdf({ result, settings, stocks, parts, cuttingName })
-                }
-                title="Сохранить как PDF (в диалоге печати выберите «Сохранить как PDF»)"
+                onClick={() => {
+                  void saveCuttingResultPdf({
+                    result,
+                    settings,
+                    stocks,
+                    parts,
+                    cuttingName,
+                  })
+                }}
+                title="Скачать PDF-файл схемы раскроя"
               >
-                .PDF
+                PDF
               </button>
               <button type="button" className="btn btn-on-blue" onClick={saveHistory}>
                 В историю

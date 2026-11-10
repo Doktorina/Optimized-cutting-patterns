@@ -1,5 +1,5 @@
 /**
- * Печать и PDF результата линейного раскроя (как в SmartCut, бренд «Раскрой»).
+ * Печать и PDF результата линейного раскроя (бренд «Раскрой»).
  */
 import { sizesFromZero, textScheme } from '../components/CuttingMap'
 import type { PartItem, Settings, SolveResult, StockItem } from '../types'
@@ -301,7 +301,277 @@ export function printCuttingResult(opts: ReportOpts): void {
   openReportWindow(buildResultReportHtml(opts), true)
 }
 
-/** PDF: окно печати — выберите «Сохранить как PDF» / Microsoft Print to PDF. */
-export function saveCuttingResultPdf(opts: ReportOpts): void {
-  openReportWindow(buildResultReportHtml(opts), true)
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
+let pdfFontsPromise: Promise<{ regular: string; bold: string }> | null = null
+
+async function loadPdfFonts(): Promise<{ regular: string; bold: string }> {
+  if (!pdfFontsPromise) {
+    pdfFontsPromise = Promise.all([
+      fetch('/fonts/DejaVuSans.ttf').then((r) => {
+        if (!r.ok) throw new Error('Не удалось загрузить шрифт DejaVuSans')
+        return r.arrayBuffer()
+      }),
+      fetch('/fonts/DejaVuSans-Bold.ttf').then((r) => {
+        if (!r.ok) throw new Error('Не удалось загрузить шрифт DejaVuSans-Bold')
+        return r.arrayBuffer()
+      }),
+    ]).then(([regular, bold]) => ({
+      regular: arrayBufferToBase64(regular),
+      bold: arrayBufferToBase64(bold),
+    }))
+  }
+  return pdfFontsPromise
+}
+
+function safeFileName(name: string): string {
+  const base = (name || 'raskroy').trim() || 'raskroy'
+  return (
+    base
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'raskroy'
+  )
+}
+
+/** Скачивание настоящего PDF-файла (без диалога печати). */
+export async function saveCuttingResultPdf(opts: ReportOpts): Promise<void> {
+  const { result, settings, stocks, parts, cuttingName } = opts
+  const { jsPDF } = await import('jspdf')
+  const fonts = await loadPdfFonts()
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  doc.addFileToVFS('DejaVuSans.ttf', fonts.regular)
+  doc.addFileToVFS('DejaVuSans-Bold.ttf', fonts.bold)
+  doc.addFont('DejaVuSans.ttf', 'DejaVuSans', 'normal')
+  doc.addFont('DejaVuSans-Bold.ttf', 'DejaVuSans', 'bold')
+
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const margin = 14
+  const contentW = pageW - margin * 2
+  let y = margin
+
+  const ensureSpace = (need: number) => {
+    if (y + need <= pageH - margin) return
+    doc.addPage()
+    y = margin
+  }
+
+  const setNormal = (size = 10) => {
+    doc.setFont('DejaVuSans', 'normal')
+    doc.setFontSize(size)
+    doc.setTextColor(28, 36, 48)
+  }
+  const setBold = (size = 10) => {
+    doc.setFont('DejaVuSans', 'bold')
+    doc.setFontSize(size)
+    doc.setTextColor(26, 79, 138)
+  }
+
+  const writeWrapped = (text: string, size = 10, gap = 4.2) => {
+    setNormal(size)
+    const lines = doc.splitTextToSize(text, contentW) as string[]
+    for (const line of lines) {
+      ensureSpace(gap)
+      doc.text(line, margin, y)
+      y += gap
+    }
+  }
+
+  const writeHeading = (text: string) => {
+    ensureSpace(10)
+    y += 2
+    setBold(12)
+    doc.text(text, margin, y)
+    y += 6
+  }
+
+  const date = new Date().toLocaleString('ru-RU')
+  const name = (cuttingName || '').trim() || 'Схема раскроя'
+
+  setBold(18)
+  doc.text('Раскрой', margin, y)
+  setNormal(9)
+  doc.setTextColor(90, 106, 122)
+  doc.text('Оптимизированные схемы раскроя', margin, y + 6)
+  doc.text(date, pageW - margin, y, { align: 'right' })
+  y += 10
+  doc.setDrawColor(42, 120, 201)
+  doc.setLineWidth(0.6)
+  doc.line(margin, y, pageW - margin, y)
+  y += 8
+
+  setBold(13)
+  doc.text(name, margin, y)
+  y += 8
+
+  writeHeading('Использовано заготовок')
+  const stocksUsed =
+    result.stocksUsed.length === 0
+      ? '—'
+      : result.stocksUsed
+          .map(
+            (s) =>
+              `${fmt(s.length, 3)} × ${s.count} шт.${s.name ? ` ${s.name}` : ''} = ${fmt(s.totalLength, 3)}`,
+          )
+          .join('\n')
+  writeWrapped(stocksUsed)
+  writeWrapped(`Польза: ${fmt(result.usefulPercent, 3)}%`)
+  writeWrapped(
+    `Остатки: ${fmt(result.wastePercent, 3)}% (${fmt(result.wasteLength, 2)})`,
+  )
+  writeWrapped(`Количество разрезов: ${result.cutCount}`)
+  writeWrapped(`Пропил: ${fmt(settings.bladeKerf, 3)} ${settings.units || ''}`.trim())
+
+  writeHeading('Схема раскроя')
+  for (let gi = 0; gi < result.grouped.length; gi++) {
+    const g = result.grouped[gi]
+    const { pattern, count, startIndex, endIndex } = g
+    const title = settings.numberLayout
+      ? count > 1
+        ? `№ ${gi + 1}, # ${startIndex}–${endIndex}`
+        : `№ ${gi + 1}, # ${startIndex}`
+      : `Схема ${gi + 1}`
+    const stockName = (pattern.stockName || '').trim()
+    const meta = `${title} · Заготовок: ${count} шт. × ${fmt(pattern.stockLength, 3)}${
+      stockName ? ` «${stockName}»` : ''
+    } · отрезков: ${pattern.parts.length}`
+
+    ensureSpace(22)
+    setNormal(9)
+    doc.setTextColor(68, 68, 85)
+    doc.text(meta, margin, y)
+    y += 4
+
+    const barH = 8
+    const total = Math.max(pattern.stockLength, 1e-9)
+    let x = margin
+    for (const p of pattern.parts) {
+      const w = (p.length / total) * contentW
+      doc.setFillColor(207, 228, 248)
+      doc.setDrawColor(122, 167, 214)
+      doc.rect(x, y, Math.max(w, 0.2), barH, 'FD')
+      const label = (p.name || '').trim()
+        ? `${fmt(p.length, 3)} ${p.name}`
+        : fmt(p.length, 3)
+      if (w > 8) {
+        setNormal(7)
+        doc.setTextColor(28, 36, 48)
+        const clipped = doc.splitTextToSize(label, w - 1) as string[]
+        doc.text(clipped[0] || '', x + w / 2, y + 5.2, { align: 'center' })
+      }
+      x += w
+    }
+    if (pattern.waste > 0) {
+      const w = (pattern.waste / total) * contentW
+      doc.setFillColor(240, 240, 240)
+      doc.setDrawColor(200, 200, 200)
+      doc.rect(x, y, Math.max(w, 0.2), barH, 'FD')
+      if (w > 8) {
+        setNormal(7)
+        doc.setTextColor(102, 102, 102)
+        doc.text(`(${fmt(pattern.waste, 3)})`, x + w / 2, y + 5.2, {
+          align: 'center',
+        })
+      }
+    }
+    y += barH + 3
+
+    let acc = 0
+    x = margin
+    setNormal(7)
+    doc.setTextColor(102, 102, 119)
+    for (const p of pattern.parts) {
+      const w = (p.length / total) * contentW
+      acc = roundLen(acc + p.length)
+      if (w > 6) doc.text(fmt(acc, 3), x + w / 2, y, { align: 'center' })
+      x += w
+    }
+    if (pattern.waste > 0) {
+      const w = (pattern.waste / total) * contentW
+      if (w > 6) {
+        doc.text(fmt(pattern.stockLength, 3), x + w / 2, y, { align: 'center' })
+      }
+    }
+    y += 6
+  }
+
+  writeHeading('Схема в текстовом формате')
+  writeWrapped(textScheme(result.grouped, settings), 8, 3.6)
+
+  writeHeading('Размеры от нуля')
+  writeWrapped(sizesFromZero(result.grouped, settings), 8, 3.6)
+
+  const usefulRem = result.remainders.filter(
+    (r) => r.length >= (settings.usefulRemainderMin || 0) && r.length > 0,
+  )
+  writeHeading('Полезные остатки')
+  writeWrapped(
+    usefulRem.length === 0
+      ? 'Нет'
+      : usefulRem
+          .map((r) => `${fmt(r.length, 3)}${r.name ? ` «${r.name}»` : ''} — ${r.count} шт.`)
+          .join('\n'),
+  )
+
+  writeHeading('Остатки')
+  writeWrapped(
+    result.remainders.length === 0
+      ? 'Нет'
+      : result.remainders
+          .map((r) => `${fmt(r.length, 3)}${r.name ? ` «${r.name}»` : ''} — ${r.count} шт.`)
+          .join('\n'),
+  )
+
+  writeHeading('Входные данные')
+  setBold(10)
+  ensureSpace(5)
+  doc.text('Заготовки', margin, y)
+  y += 5
+  writeWrapped(
+    stocks
+      .filter((s) => typeof s.length === 'number' && s.length > 0)
+      .map(
+        (s) =>
+          `${s.length}${s.quantity === '' ? ' — без лимита' : ` — ${s.quantity} шт.`}${
+            s.name ? ` (${s.name})` : ''
+          }`,
+      )
+      .join('\n') || '—',
+  )
+  setBold(10)
+  ensureSpace(5)
+  doc.text('Отрезки', margin, y)
+  y += 5
+  writeWrapped(
+    parts
+      .filter((p) => partCalcLength(p) > 0 && typeof p.quantity === 'number')
+      .map(
+        (p) =>
+          `${partCalcLength(p)} — ${p.quantity} шт.${p.name ? ` (${p.name})` : ''}`,
+      )
+      .join('\n') || '—',
+  )
+
+  ensureSpace(10)
+  y += 4
+  doc.setDrawColor(213, 221, 230)
+  doc.setLineWidth(0.3)
+  doc.line(margin, y, pageW - margin, y)
+  y += 5
+  setNormal(8)
+  doc.setTextColor(106, 122, 138)
+  doc.text('Раскрой · локальный калькулятор оптимального раскроя', margin, y)
+
+  doc.save(`${safeFileName(name)}.pdf`)
 }

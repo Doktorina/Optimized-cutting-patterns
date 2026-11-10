@@ -50,10 +50,10 @@ export type Settings = {
   usefulRemainderMin: number
   resultOrder: ResultBlockId[]
   resultVisible: Record<ResultBlockId, boolean>
-  /** Считать через SmartCut.Pro API */
-  useSmartCutApi: boolean
-  /** Токен SmartCut.Pro (хранится только локально) */
-  smartCutApiToken: string
+  /** Использовать внешний сервис расчёта */
+  useRemoteCutApi: boolean
+  /** Токен сервиса расчёта (только локально / из env) */
+  cutApiToken: string
 }
 
 /** Один отрезок на схеме (уже числовая длина) */
@@ -171,8 +171,8 @@ export const DEFAULT_SETTINGS: Settings = {
   usefulRemainderMin: 0,
   resultOrder: [...DEFAULT_RESULT_ORDER],
   resultVisible: { ...DEFAULT_RESULT_VISIBLE },
-  useSmartCutApi: false,
-  smartCutApiToken: '',
+  useRemoteCutApi: false,
+  cutApiToken: '',
 }
 
 export function uid(prefix = 'id'): string {

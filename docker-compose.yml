@@ -1,10 +1,12 @@
-# Деплой калькулятора раскроя на сервере.
-# Перед запуском: docker login 192.168.48.150:3002
-# Запуск:  docker compose up -d
-# Логи:    docker compose logs -f
-# Останов: docker compose down
+# Сервер: /opt/raskroy/raskroy
+# Registry: 192.168.48.150:3002/admin/raskroy:latest
+# Порт хоста 8084 — не пересекается с другими контейнерами
 services:
   raskroy:
+    build:
+      context: .
+      args:
+        VITE_CUT_API_TOKEN: ${VITE_CUT_API_TOKEN:-}
     image: 192.168.48.150:3002/admin/raskroy:latest
     container_name: raskroy
     restart: unless-stopped

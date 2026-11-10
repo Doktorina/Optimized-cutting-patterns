@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { solveViaSmartCut } from '../algorithm/smartcutApi'
+import { solveViaCutService } from '../algorithm/cutService'
 import { sanitizeInputs, solveCutting, validateInputs } from '../algorithm/solve'
 import {
   addHistoryEntry,
@@ -35,33 +35,39 @@ import {
   uid,
 } from '../types'
 
-const SETTINGS_KEY = 'raskroy-settings-v1'
+const SETTINGS_KEY = 'raskroy-settings-v2'
 const DATA_KEY = 'raskroy-line-data-v1'
 
-const ENV_SMARTCUT_TOKEN = String(import.meta.env.VITE_SMARTCUT_API_TOKEN || '').trim()
+const ENV_CUT_TOKEN = String(import.meta.env.VITE_CUT_API_TOKEN || '').trim()
 
-function withEnvSmartCutDefaults(settings: Settings): Settings {
-  if (settings.smartCutApiToken?.trim() || !ENV_SMARTCUT_TOKEN) return settings
+function withEnvCutDefaults(settings: Settings): Settings {
+  if (settings.cutApiToken?.trim() || !ENV_CUT_TOKEN) return settings
   return {
     ...settings,
-    smartCutApiToken: ENV_SMARTCUT_TOKEN,
-    useSmartCutApi: true,
+    cutApiToken: ENV_CUT_TOKEN,
+    useRemoteCutApi: true,
   }
 }
 
 function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
-    if (!raw) return withEnvSmartCutDefaults({ ...DEFAULT_SETTINGS })
+    if (!raw) return withEnvCutDefaults({ ...DEFAULT_SETTINGS })
     const parsed = JSON.parse(raw) as Partial<Settings>
-    return withEnvSmartCutDefaults({
+    return withEnvCutDefaults({
       ...DEFAULT_SETTINGS,
       ...parsed,
+      useRemoteCutApi:
+        typeof parsed.useRemoteCutApi === 'boolean'
+          ? parsed.useRemoteCutApi
+          : DEFAULT_SETTINGS.useRemoteCutApi,
+      cutApiToken:
+        typeof parsed.cutApiToken === 'string' ? parsed.cutApiToken : DEFAULT_SETTINGS.cutApiToken,
       resultOrder: parsed.resultOrder?.length ? parsed.resultOrder : DEFAULT_SETTINGS.resultOrder,
       resultVisible: { ...DEFAULT_SETTINGS.resultVisible, ...(parsed.resultVisible || {}) },
     })
   } catch {
-    return withEnvSmartCutDefaults({ ...DEFAULT_SETTINGS })
+    return withEnvCutDefaults({ ...DEFAULT_SETTINGS })
   }
 }
 
@@ -171,15 +177,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const run = async () => {
       try {
-        if (settings.useSmartCutApi && settings.smartCutApiToken.trim()) {
-          setResult(
-            await solveViaSmartCut(
-              cleaned.stocks,
-              cleaned.parts,
-              settings,
-              settings.smartCutApiToken,
-            ),
-          )
+        if (settings.useRemoteCutApi && settings.cutApiToken.trim()) {
+          try {
+            setResult(
+              await solveViaCutService(
+                cleaned.stocks,
+                cleaned.parts,
+                settings,
+                settings.cutApiToken,
+              ),
+            )
+          } catch (apiErr) {
+            // Если API недоступен на сервере — считаем локально, чтобы не оставлять пустой результат
+            console.warn('Сервис расчёта недоступен, локальный режим:', apiErr)
+            setResult(solveCutting(cleaned.stocks, cleaned.parts, settings))
+          }
         } else {
           setResult(solveCutting(cleaned.stocks, cleaned.parts, settings))
         }

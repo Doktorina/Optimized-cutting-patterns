@@ -1,10 +1,9 @@
 /**
- * Клиент SmartCut.Pro API v1 (линейный раскрой).
- * Документация: https://smartcut.pro/ru/faq
+ * Клиент внешнего сервиса линейного раскроя.
  *
  * Формула params:
  *   -l {пропил} -s {режим} -b {длина}:{кол-во}… -c {длина}-{кол-во}…
- * Длины в API — целые. Если ввод в метрах (11,7) → ×1000 (11700).
+ * Длины — целые. Если ввод в метрах (11,7) → ×1000 (11700).
  * Если уже мм/тысячные (6000) — как есть.
  * Кол-во заготовки > 0; «без лимита» → 99999.
  */
@@ -19,7 +18,7 @@ import type {
 import { partCalcLength, roundLen } from '../types'
 import { improvePatternsFill } from './solve'
 
-const API_URL = '/smartcut-api/'
+const API_URL = '/cut-api/'
 const UNLIMITED_QTY = 99999
 
 type UnitScale = 'meters' | 'raw'
@@ -95,7 +94,7 @@ function stockPriorityValue(s: StockItem): number {
   return Number.isFinite(p) ? p : 0
 }
 
-export function buildSmartCutParams(
+export function buildCutParams(
   stocks: StockItem[],
   parts: PartItem[],
   settings: Settings,
@@ -260,7 +259,7 @@ function groupPatternsLocal(patterns: CuttingPattern[]): SolveResult['grouped'] 
   return groups
 }
 
-async function fetchSmartCutPass(
+async function fetchCutPass(
   stocks: StockItem[],
   parts: PartItem[],
   settings: Settings,
@@ -268,7 +267,7 @@ async function fetchSmartCutPass(
   scale: UnitScale,
   sortMode: number,
 ): Promise<CuttingPattern[]> {
-  const params = buildSmartCutParams(stocks, parts, settings, scale, sortMode)
+  const params = buildCutParams(stocks, parts, settings, scale, sortMode)
   if (!params) return []
 
   const body = new URLSearchParams()
@@ -285,14 +284,14 @@ async function fetchSmartCutPass(
   try {
     json = (await res.json()) as ApiResponse
   } catch {
-    throw new Error(`SmartCut API: неверный ответ (${res.status})`)
+    throw new Error(`Ошибка расчёта: неверный ответ сервера (${res.status})`)
   }
 
   if (!res.ok || json.status !== 'ok') {
     const msg =
       typeof json.message === 'string' && json.message
         ? json.message
-        : `Ошибка SmartCut API (${res.status})`
+        : `Ошибка расчёта (${res.status})`
     throw new Error(msg)
   }
 
@@ -523,26 +522,26 @@ function assignPartNames(patterns: CuttingPattern[], parts: PartItem[]): void {
 }
 
 /**
- * SmartCut API не знает «очерёдность» — считаем по группам приоритета:
+ * Внешний сервис не знает «очерёдность» — считаем по группам приоритета:
  * сначала очерёдность 1, потом 2…, 0 в конце.
  * После API — локальная переупаковка для меньших остатков.
  */
-export async function solveViaSmartCut(
+export async function solveViaCutService(
   stocks: StockItem[],
   parts: PartItem[],
   settings: Settings,
   apiToken: string,
 ): Promise<SolveResult> {
   const token = apiToken.trim()
-  if (!token) throw new Error('Не указан API-токен SmartCut.Pro')
+  if (!token) throw new Error('Не заданы параметры расчёта')
 
   const scale = detectUnitScale(stocks, parts)
   const groups = groupStocksByPriority(stocks)
-  if (!groups.length) throw new Error('Нет данных для API: заготовки и отрезки')
+  if (!groups.length) throw new Error('Нет данных для расчёта: заготовки и отрезки')
 
   const remaining = clonePartsWithQty(parts)
   if (!remaining.some((p) => (typeof p.quantity === 'number' ? p.quantity : 0) > 0)) {
-    throw new Error('Нет данных для API: заготовки и отрезки')
+    throw new Error('Нет данных для расчёта: заготовки и отрезки')
   }
 
   let allPatterns: CuttingPattern[] = []
@@ -552,7 +551,7 @@ export async function solveViaSmartCut(
     if (!fitting.length) continue
     if (!anyPartFitsStocks(fitting, group, settings.trimming || 0)) continue
 
-    const passPatterns = await fetchSmartCutPass(group, fitting, settings, token, scale, 2)
+    const passPatterns = await fetchCutPass(group, fitting, settings, token, scale, 2)
     if (!passPatterns.length) continue
     assignStockNames(passPatterns, group)
     assignPartNames(passPatterns, fitting)
@@ -561,7 +560,7 @@ export async function solveViaSmartCut(
   }
 
   if (!allPatterns.length) {
-    throw new Error('SmartCut API: не удалось разместить отрезки на указанных заготовках')
+    throw new Error('Не удалось разместить отрезки на указанных заготовках')
   }
 
   allPatterns = improvePatternsFill(allPatterns, settings)
