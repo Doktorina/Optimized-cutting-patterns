@@ -1,18 +1,9 @@
-# Сервер: /opt/raskroy/raskroy
-# Образ с GitHub (после push в main Actions публикует :latest).
-# Watchtower раз в минуту проверяет обновление и перезапускает контейнер.
+# Образ собирает CI и кладёт в registry 192.168.48.150:3002
+# На сервере подхватывается: 192.168.48.150:3002/admin/raskroy:latest
 services:
   raskroy:
-    image: ghcr.io/doktorina/raskroy:latest
+    image: 192.168.48.150:3002/admin/raskroy:latest
     container_name: raskroy
     restart: unless-stopped
     ports:
       - "8084:80"
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: raskroy-watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 60 --cleanup raskroy

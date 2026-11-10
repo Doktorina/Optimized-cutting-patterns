@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
+# Токен: из build-arg (CI) или из .env.production в репозитории
 ARG VITE_CUT_API_TOKEN=
 RUN if [ -n "$VITE_CUT_API_TOKEN" ]; then \
       printf 'VITE_CUT_API_TOKEN=%s\n' "$VITE_CUT_API_TOKEN" > .env.production; \
