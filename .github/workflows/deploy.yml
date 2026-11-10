@@ -1,5 +1,8 @@
 name: Deploy Raskroy
 
+# Работает через self-hosted runner в той же сети, что и сервер 192.168.48.150
+# (облачный GitHub runner до локального IP не достучится).
+
 on:
   push:
     branches: [main, master]
@@ -11,27 +14,19 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, raskroy]
     steps:
       - name: Deploy on server
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script_stop: true
-          envs: VITE_CUT_API_TOKEN
-          script: |
-            set -e
-            cd /opt/raskroy/raskroy
-            git pull
-
-            docker build \
-              --build-arg VITE_CUT_API_TOKEN="${VITE_CUT_API_TOKEN}" \
-              -t 192.168.48.150:3002/admin/raskroy:latest \
-              .
-
-            docker compose up -d
         env:
           VITE_CUT_API_TOKEN: ${{ secrets.VITE_CUT_API_TOKEN }}
+        run: |
+          set -e
+          cd /opt/raskroy/raskroy
+          git pull
+
+          docker build \
+            --build-arg VITE_CUT_API_TOKEN="${VITE_CUT_API_TOKEN}" \
+            -t 192.168.48.150:3002/admin/raskroy:latest \
+            .
+
+          docker compose up -d
