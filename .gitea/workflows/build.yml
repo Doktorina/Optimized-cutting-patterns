@@ -1,5 +1,4 @@
-# Отключён дубль деплоя: основное автообновление — GitHub Actions (.github/workflows/deploy.yml)
-# Чтобы не конфликтовать с GitHub, этот workflow ничего не пушит.
+# Не используется: деплой идёт через GitHub Actions → ghcr.io → Watchtower.
 name: Gitea noop
 
 on:
@@ -9,5 +8,4 @@ jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - name: Skip
-        run: echo "Deploy идёт через GitHub Actions"
+      - run: echo "Deploy via GitHub Actions + ghcr.io"
