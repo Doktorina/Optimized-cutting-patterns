@@ -4,11 +4,13 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-# Токен: из build-arg (CI) или из .env.production в репозитории
+# Токен расчёта: build-arg (CI) или файл .env.production из репозитория
 ARG VITE_CUT_API_TOKEN=
 RUN if [ -n "$VITE_CUT_API_TOKEN" ]; then \
       printf 'VITE_CUT_API_TOKEN=%s\n' "$VITE_CUT_API_TOKEN" > .env.production; \
     fi
+RUN test -f .env.production && grep -q 'VITE_CUT_API_TOKEN=.\+' .env.production \
+      || (echo "ERROR: нет токена расчёта (.env.production / build-arg)" && exit 1)
 RUN npm run build
 
 # ─── Этап 2: Продакшен-сервер ───
